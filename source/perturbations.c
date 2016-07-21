@@ -1115,90 +1115,95 @@ int perturb_timesampling_for_sources(
 
   }
 
-  /** - --> infer total number of time steps, ppt->tau_size */
-  ppt->tau_size = counter;
+  if ( ppt->tau_sampling == NULL ) {
+    /* otherwise the caller already knew what they wanted */
 
-  /** - --> allocate array of time steps, ppt->tau_sampling[index_tau] */
-  class_alloc(ppt->tau_sampling,ppt->tau_size * sizeof(double),ppt->error_message);
+    /** - --> infer total number of time steps, ppt->tau_size */
+    ppt->tau_size = counter;
 
-  /** - --> repeat the same steps, now filling the array with each tau value: */
+    /** - --> allocate array of time steps, ppt->tau_sampling[index_tau] */
+    class_alloc(ppt->tau_sampling,ppt->tau_size * sizeof(double),ppt->error_message);
 
-  /** - --> (b.1.) first sampling point = when the universe stops being opaque */
+    /** - --> repeat the same steps, now filling the array with each tau value: */
 
-  counter = 0;
-  ppt->tau_sampling[counter]=tau_ini;
+    /** - --> (b.1.) first sampling point = when the universe stops being opaque */
 
-  /** - --> (b.2.) next sampling point = previous + ppr->perturb_sampling_stepsize * timescale_source, where
-      timescale_source1 = \f$ |g/\dot{g}| = |\dot{\kappa}-\ddot{\kappa}/\dot{\kappa}|^{-1} \f$;
-      timescale_source2 = \f$ |2\ddot{a}/a-(\dot{a}/a)^2|^{-1/2} \f$ (to sample correctly the late ISW effect; and
-      timescale_source=1/(1/timescale_source1+1/timescale_source2); repeat till today.
-      If CMB not requested:
-      timescale_source = 1/aH; repeat till today.  */
+    counter = 0;
+    ppt->tau_sampling[counter]=tau_ini;
 
-  last_index_back = first_index_back;
-  last_index_thermo = first_index_thermo;
-  tau = tau_ini;
+    /** - --> (b.2.) next sampling point = previous + ppr->perturb_sampling_stepsize * timescale_source, where
+        timescale_source1 = \f$ |g/\dot{g}| = |\dot{\kappa}-\ddot{\kappa}/\dot{\kappa}|^{-1} \f$;
+        timescale_source2 = \f$ |2\ddot{a}/a-(\dot{a}/a)^2|^{-1/2} \f$ (to sample correctly the late ISW effect; and
+        timescale_source=1/(1/timescale_source1+1/timescale_source2); repeat till today.
+        If CMB not requested:
+        timescale_source = 1/aH; repeat till today.  */
 
-  while (tau < pba->conformal_age) {
+    last_index_back = first_index_back;
+    last_index_thermo = first_index_thermo;
+    tau = tau_ini;
 
-    class_call(background_at_tau(pba,
-                                 tau,
-                                 pba->short_info,
-                                 pba->inter_closeby,
-                                 &last_index_back,
-                                 pvecback),
-               pba->error_message,
-               ppt->error_message);
+    while (tau < pba->conformal_age) {
 
-    class_call(thermodynamics_at_z(pba,
-                                   pth,
-                                   1./pvecback[pba->index_bg_a]-1.,  /* redshift z=1/a-1 */
-                                   pth->inter_closeby,
-                                   &last_index_thermo,
-                                   pvecback,
-                                   pvecthermo),
-               pth->error_message,
-               ppt->error_message);
+      class_call(background_at_tau(pba,
+                                   tau,
+                                   pba->short_info,
+                                   pba->inter_closeby,
+                                   &last_index_back,
+                                   pvecback),
+                 pba->error_message,
+                 ppt->error_message);
 
-    if (ppt->has_cmb == _TRUE_) {
+      class_call(thermodynamics_at_z(pba,
+                                     pth,
+                                     1./pvecback[pba->index_bg_a]-1.,  /* redshift z=1/a-1 */
+                                     pth->inter_closeby,
+                                     &last_index_thermo,
+                                     pvecback,
+                                     pvecthermo),
+                 pth->error_message,
+                 ppt->error_message);
 
-      /* variation rate of thermodynamics variables */
-      rate_thermo = pvecthermo[pth->index_th_rate];
+      if (ppt->has_cmb == _TRUE_) {
 
-      /* variation rate of metric due to late ISW effect (important at late times) */
-      a_prime_over_a = pvecback[pba->index_bg_H] * pvecback[pba->index_bg_a];
-      a_primeprime_over_a = pvecback[pba->index_bg_H_prime] * pvecback[pba->index_bg_a]
-        + 2. * a_prime_over_a * a_prime_over_a;
-      rate_isw_squared = fabs(2.*a_primeprime_over_a-a_prime_over_a*a_prime_over_a);
+        /* variation rate of thermodynamics variables */
+        rate_thermo = pvecthermo[pth->index_th_rate];
 
-      /* compute rate */
-      timescale_source = sqrt(rate_thermo*rate_thermo+rate_isw_squared);
+        /* variation rate of metric due to late ISW effect (important at late times) */
+        a_prime_over_a = pvecback[pba->index_bg_H] * pvecback[pba->index_bg_a];
+        a_primeprime_over_a = pvecback[pba->index_bg_H_prime] * pvecback[pba->index_bg_a]
+          + 2. * a_prime_over_a * a_prime_over_a;
+        rate_isw_squared = fabs(2.*a_primeprime_over_a-a_prime_over_a*a_prime_over_a);
+
+        /* compute rate */
+        timescale_source = sqrt(rate_thermo*rate_thermo+rate_isw_squared);
+      }
+      else {
+        a_prime_over_a = pvecback[pba->index_bg_H] * pvecback[pba->index_bg_a];
+        timescale_source = a_prime_over_a;
+      }
+
+      /* check it is non-zero */
+      class_test(timescale_source == 0.,
+                 ppt->error_message,
+                 "null evolution rate, integration is diverging");
+
+      /* compute inverse rate */
+      timescale_source = 1./timescale_source;
+
+      class_test(fabs(ppr->perturb_sampling_stepsize*timescale_source/tau) < ppr->smallest_allowed_variation,
+                 ppt->error_message,
+                 "integration step =%e < machine precision : leads either to numerical error or infinite loop",ppr->perturb_sampling_stepsize*timescale_source);
+
+      tau = tau + ppr->perturb_sampling_stepsize*timescale_source;
+      counter++;
+      ppt->tau_sampling[counter]=tau;
+
     }
-    else {
-      a_prime_over_a = pvecback[pba->index_bg_H] * pvecback[pba->index_bg_a];
-      timescale_source = a_prime_over_a;
-    }
 
-    /* check it is non-zero */
-    class_test(timescale_source == 0.,
-               ppt->error_message,
-               "null evolution rate, integration is diverging");
+    /** - last sampling point = exactly today */
+    ppt->tau_sampling[counter] = pba->conformal_age;
 
-    /* compute inverse rate */
-    timescale_source = 1./timescale_source;
-
-    class_test(fabs(ppr->perturb_sampling_stepsize*timescale_source/tau) < ppr->smallest_allowed_variation,
-               ppt->error_message,
-               "integration step =%e < machine precision : leads either to numerical error or infinite loop",ppr->perturb_sampling_stepsize*timescale_source);
-
-    tau = tau + ppr->perturb_sampling_stepsize*timescale_source;
-    counter++;
-    ppt->tau_sampling[counter]=tau;
-
-  }
-
-  /** - last sampling point = exactly today */
-  ppt->tau_sampling[counter] = pba->conformal_age;
+  } // if ( ppt->tau_sampling == NULL )
 
   free(pvecback);
   free(pvecthermo);
